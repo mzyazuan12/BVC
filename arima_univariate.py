@@ -77,7 +77,7 @@ print("\nEvaluation Metrics on Test Set:")
 print(f"  Mean Absolute Error (MAE): {mae:.4f}")
 print(f"  Mean Squared Error (MSE): {mse:.4f}")
 print(f"  Root Mean Squared Error (RMSE): {rmse:.4f}")
-print(f"  R^2 Score: {r2:.4f}")
+print(f" R^2 Score: {r2:.4f}")
 print(f"  Mean Absolute Percentage Error (MAPE): {mape:.2f}%")
 print(f"  Accuracy (1 - MAE/mean): {accuracy:.4f}")
 
