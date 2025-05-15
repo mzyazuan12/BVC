@@ -16,21 +16,14 @@ data.reset_index(drop=True, inplace=True)
 target_col = 'Gross_Revenue'
 values = data[target_col].values.reshape(-1, 1)
 
-# Split data: 80% train, 10% validation, 10% test
-n = len(data)
-train_end = int(n * 0.8)
-val_end = int(n * 0.9)
+# Split data: 80% train, 20% test
+split_idx = int(len(data) * 0.8)
+train, test = values[:split_idx], values[split_idx:]
 
-train = values[:train_end]
-val   = values[train_end:val_end]
-test  = values[val_end:]
-
-# Scale data using MinMaxScaler (fit on train only)
+# Scale data using MinMaxScaler
 scaler = MinMaxScaler(feature_range=(0, 1))
 train_scaled = scaler.fit_transform(train)
-val_scaled   = scaler.transform(val)
-test_scaled  = scaler.transform(test)
-
+test_scaled = scaler.transform(test)
 
 # Helper Function: Create Dataset with a Given Look-back
 
@@ -54,11 +47,11 @@ def objective(trial):
     
     # Create dataset using the current look_back value
     X_train, y_train = create_dataset(train_scaled, look_back)
-    X_val, y_val     = create_dataset(val_scaled, look_back)
+    X_test, y_test = create_dataset(test_scaled, look_back)
     
     # Reshape to [samples, timesteps, features]
     X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
-    X_val   = X_val.reshape((X_val.shape[0], X_val.shape[1], 1))
+    X_test  = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
     
     # Build the LSTM model
     model = Sequential()
@@ -70,14 +63,15 @@ def objective(trial):
     optimizer = Adam(learning_rate=lr)
     model.compile(optimizer=optimizer, loss='mean_squared_error')
     
-    # Train the model (using the validation set directly)
+    # Train the model
     model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, 
-              verbose=0, validation_data=(X_val, y_val))
+              verbose=0, validation_split=0.1)
     
-    # Make predictions on validation set and compute RMSE
-    y_pred = model.predict(X_val)
-    rmse = np.sqrt(mean_squared_error(y_val, y_pred))
+    # Make predictions and compute RMSE
+    y_pred = model.predict(X_test)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
     return rmse
+
 
 # Run Optuna Study
 
@@ -93,16 +87,11 @@ for key, value in trial.params.items():
 # Rebuild the Model Using Best Hyperparameters
 
 best_params = trial.params
-look_back = best_params['look_back'] 
-
-# For final training, combine training and validation sets
-train_val_scaled = np.concatenate((train_scaled, val_scaled), axis=0)
-X_train_val, y_train_val = create_dataset(train_val_scaled, look_back)
+look_back = best_params['look_back']
+X_train, y_train = create_dataset(train_scaled, look_back)
 X_test, y_test = create_dataset(test_scaled, look_back)
-
-# Reshape datasets to [samples, timesteps, features]
-X_train_val = X_train_val.reshape((X_train_val.shape[0], X_train_val.shape[1], 1))
-X_test      = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
+X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
+X_test  = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
 
 model = Sequential()
 model.add(LSTM(best_params['units'], activation='relu', input_shape=(look_back, 1)))
@@ -112,10 +101,11 @@ model.add(Dense(1))
 optimizer = Adam(learning_rate=best_params['lr'])
 model.compile(optimizer=optimizer, loss='mean_squared_error')
 
-history = model.fit(X_train_val, y_train_val, epochs=best_params['epochs'], 
+history = model.fit(X_train, y_train, epochs=best_params['epochs'], 
                     batch_size=best_params['batch_size'], verbose=1, validation_split=0.1)
 
 # Forecasting on Test Data
+
 test_pred = model.predict(X_test)
 test_pred_inv = scaler.inverse_transform(test_pred)
 y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1))
@@ -123,6 +113,7 @@ y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1))
 # Compute evaluation metrics
 rmse = np.sqrt(mean_squared_error(y_test_inv, test_pred_inv))
 mae = mean_absolute_error(y_test_inv, test_pred_inv)
+# Avoid division by zero in MAPE calculation:
 mape = np.mean(np.abs((y_test_inv - test_pred_inv) / np.where(y_test_inv==0, 1, y_test_inv))) * 100
 r2 = r2_score(y_test_inv, test_pred_inv)
 
@@ -131,27 +122,21 @@ print(f"  RMSE: {rmse:.2f}")
 print(f"  MAE: {mae:.2f}")
 print(f"  MAPE: {mape:.2f}%")
 print(f"  R²: {r2:.2f}")
-
 # Plotting the Results
+
 plt.figure(figsize=(12, 6))
+# Because sequences are created with 'look_back', the first look_back dates are lost
+train_dates = data['Date'].values[look_back:split_idx]
+test_dates = data['Date'].values[split_idx+look_back:]
 
-# Adjust date indices for plotting considering the look_back offset
-train_dates = data['Date'].values[look_back:train_end]
-val_dates   = data['Date'].values[train_end+look_back:val_end]
-test_dates  = data['Date'].values[val_end+look_back:]
-
-# For plotting, combine all scaled data and inverse transform
-full_scaled = np.concatenate((train_scaled, val_scaled, test_scaled), axis=0)
-full_actual_inv = scaler.inverse_transform(full_scaled)
+full_actual = np.concatenate([train_scaled, test_scaled])
+# Inverse-transform full actual series for plotting
+full_actual_inv = scaler.inverse_transform(full_actual)
 
 plt.plot(data['Date'], full_actual_inv, label='Actual', marker='o', linestyle='-')
 plt.plot(test_dates, test_pred_inv, label='Test Forecast', marker='x', linestyle='--')
-
-# Mark split boundaries
-plt.axvline(x=data['Date'].iloc[train_end], color='gray', linestyle='--', label='Train/Validation Split')
-plt.axvline(x=data['Date'].iloc[val_end], color='black', linestyle='--', label='Validation/Test Split')
-
-plt.title("LSTM Forecast for Gross Revenue (80/10/10 Split, Optimized with Optuna)")
+plt.axvline(x=data['Date'].iloc[split_idx], color='gray', linestyle='--', label='Train/Test Split')
+plt.title("LSTM Forecast for Gross Revenue (Optimized with Optuna)")
 plt.xlabel("Date")
 plt.ylabel(target_col)
 plt.legend()
