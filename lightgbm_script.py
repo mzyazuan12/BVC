@@ -7,7 +7,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import lightgbm as lgb
 import optuna
-from sklearn.base import clone  # <-- Use 'clone', not 'cloneq'
+from sklearn.base import clone 
 
 # 1. Data Loading and Initial Feature Engineering
 df = pd.read_csv("d.csv", parse_dates=["Date"])
