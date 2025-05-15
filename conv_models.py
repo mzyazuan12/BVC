@@ -1,4 +1,4 @@
-# conv_models.py
+# conv_models.py (discontinued program)
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
